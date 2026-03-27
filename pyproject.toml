@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xiyu-translator"
+version = "0.0.1"
+description = "汐语翻译工具 - 强大的文本翻译工具，支持基于 LLM 的智能翻译和简繁体转换"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "XiYu Translator Team", email = "xiyu@example.com"}
+]
+maintainers = [
+    {name = "XiYu Translator Team", email = "xiyu@example.com"}
+]
+keywords = [
+    "translation",
+    "llm",
+    "chinese",
+    "simplified",
+    "traditional",
+    "opencc",
+    "nlp",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Linguistic",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "openai>=1.0.0",
+    "opencc>=1.1.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/xiyu-translator"
+Repository = "https://github.com/yourusername/xiyu-translator.git"
+Documentation = "https://github.com/yourusername/xiyu-translator#readme"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["xiyu_translator*"]
