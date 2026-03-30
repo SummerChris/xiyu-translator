@@ -36,6 +36,7 @@ setup(
         "openai>=1.0.0",
         "opencc>=1.1.0",
         "python-dotenv>=1.0.0",
+        "lingua-language-detector>=2.0.0",
     ],
     extras_require={
         "dev": [

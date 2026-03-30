@@ -9,6 +9,7 @@ import uuid
 import re
 from openai import OpenAI, OpenAIError
 from opencc import OpenCC
+from lingua import Language, LanguageDetectorBuilder
 
 # 加载.env 文件
 from dotenv import load_dotenv
@@ -34,30 +35,40 @@ def translate_to_simple_chinese(text, param='t2s'):
 
 def language_classify(text):
     """
-    简繁中文检测函数
+    检测文本的语言
     支持简体中文、繁体中文、混合文本检测
 
     :param text: 待检测的文本
     :return: 检测结果，'zh-Hans' 表示简体中文，'zh-Hant' 表示繁体中文，'' 表示非中文
     """
     try:
-        converter_s2t = OpenCC('s2t')  # 简转繁
-
-        # 先识别是否包含中文字符
-        chinese_chars = re.findall('[\u4e00-\u9fff]', text)
-        if len(chinese_chars) / max(len(text), 1) < 0.3:  # 中文占比阈值
+        if not text or not isinstance(text, str):
             return ""
+            
+        languages = [Language.ENGLISH,
+                     Language.CHINESE,
+                     Language.JAPANESE,
+                     Language.FRENCH,
+                     Language.GERMAN,
+                     Language.SPANISH,
+                     Language.HINDI,
+                     Language.KOREAN,
+                     ]
+        detector = LanguageDetectorBuilder.from_languages(*languages).build()
+        language = detector.detect_language_of(text)
 
-        # 使用 OpenCC 进行双向转换比对
+        if language != Language.CHINESE:
+            return language.iso_code_639_1.name if language.iso_code_639_1 else ""
+
+        # 解决简体中文和繁体中文的识别问题
         converter_t2s = OpenCC('t2s')  # 繁转简
         simplified = converter_t2s.convert(text)
+        # 如果繁转简后不变，说明原文就是简体
+        is_simplified = (simplified == text)
 
         converter_s2t = OpenCC('s2t')  # 简转繁
         traditional = converter_s2t.convert(text)
-
-        # 判断是否为纯简体（繁转简后不变）
-        is_simplified = (simplified == text)
-        # 判断是否为纯繁体（简转繁后不变）
+        # 如果简转繁后不变，说明原文就是繁体
         is_traditional = (traditional == text)
 
         # 混合情况处理
@@ -74,7 +85,7 @@ def language_classify(text):
                 return 'zh-Hant'  # 繁体中文
 
     except Exception as e:
-        print(f"检测异常：{str(e)}")
+        print(f"语言检测失败：{str(e)}")
         return ""  # 降级处理
 
 
