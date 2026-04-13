@@ -5,10 +5,11 @@
 ## ✨ 特性
 
 - 🤖 **LLM 智能翻译**: 基于大语言模型的高质量翻译
+- 🔄 **主备模型自动切换**: 支持配置主备模型，自动故障转移
 - 📦 **批量翻译**: 高效的批量文本处理，自动分片优化
 - 🌐 **多风格支持**: 推特、新闻、学术、标题等多种翻译风格
 - 🈶 **简繁转换**: 支持简体中文与繁体中文互转
-- 🔍 **语言检测**: 自动识别简体中文、繁体中文
+- 🔍 **语言检测**: 自动识别简体中文、繁体中文及多种语言
 - 🔒 **隐私保护**: 本地部署，完全控制数据
 
 ## 📦 安装
@@ -16,7 +17,7 @@
 ### 从 Git 仓库安装
 
 ```bash
-git clone https://github.com/SummerChris/XiYuTranslator.git
+git clone https://github.com/SummerChris/xiyu-translator.git
 cd XiYuTranslator
 pip install .
 ```
@@ -26,6 +27,7 @@ pip install .
 安装时会自动安装以下依赖：
 - `openai>=1.0.0` - OpenAI API 客户端
 - `opencc>=1.1.0` - 中文简繁转换
+- `lingua-language-detector>=2.0.0` - 多语言检测
 - `python-dotenv>=1.0.0` - 环境变量管理
 
 ## ⚙️ 配置
@@ -37,10 +39,21 @@ pip install .
 在项目根目录创建 `.env` 文件：
 
 ```env
+# 主模型配置
 LLM_API_KEY=your_api_key_here
 LLM_API_URL=http://your-api-endpoint.com/v1
-LLM_MODEL=your_model_name
+LLM_MT_MODEL=your_translation_model
+
+# 备用模型配置（可选）
+LLM_API_KEY_BACKUP=your_backup_api_key
+LLM_API_URL_BACKUP=https://backup-api-endpoint.com/v1
+LLM_MT_MODEL_BACKUP=backup_model_name
 ```
+
+**配置说明：**
+- 主模型和备用模型可以独立配置
+- 当主模型失败时，系统会自动切换到备用模型
+- 备用模型配置为可选项，如不配置则仅使用主模型
 
 ### 方式 2: 设置环境变量
 
@@ -48,12 +61,12 @@ LLM_MODEL=your_model_name
 # Linux/macOS
 export LLM_API_KEY=your_api_key_here
 export LLM_API_URL=http://your-api-endpoint.com/v1
-export LLM_MODEL=your_model_name
+export LLM_MT_MODEL=your_translation_model
 
 # Windows PowerShell
 $env:LLM_API_KEY="your_api_key_here"
 $env:LLM_API_URL="http://your-api-endpoint.com/v1"
-$env:LLM_MODEL="your_model_name"
+$env:LLM_MT_MODEL="your_translation_model"
 ```
 
 ## 🚀 快速开始
@@ -142,9 +155,9 @@ for text in texts:
 
 ## 📖 API 文档
 
-### `llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH', max_tokens=60000)`
+### `llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH', max_tokens=30000)`
 
-单条文本翻译函数。
+单条文本翻译函数，支持主备模型自动切换。
 
 **参数：**
 - `expert` (str): AI 专家类型
@@ -159,10 +172,15 @@ for text in texts:
 - `target_lang` (str): 目标语言
   - `'ZH'`: 简体中文
   - `'EN'`: 英文
-- `max_tokens` (int): 最大 token 数（默认 60000）
+- `max_tokens` (int): 最大 token 数（默认 30000）
 
 **返回：**
 - str: 翻译后的文本
+
+**特性：**
+- 自动重试机制（最多 3 次）
+- 主备模型无缝切换
+- 指数退避重试策略
 
 ---
 
@@ -242,16 +260,17 @@ python tests/test_import.py
 XiYuTranslator/
 ├── xiyu_translator/       # 包源代码
 │   ├── __init__.py        # 包入口和公共 API
-│   ├── core.py            # 核心翻译功能
-│   └── converter.py       # 简繁转换功能
+│   └── core.py            # 核心翻译功能（含简繁转换、语言检测）
 ├── examples/              # 示例代码
 │   └── usage_examples.py
 ├── tests/                 # 测试文件
 │   ├── test_translator.py
 │   └── test_import.py
 ├── pyproject.toml         # 项目配置文件
+├── setup.py               # 安装脚本
 ├── README.md              # 项目说明文档
-└── .env                   # 环境变量配置（需自行创建）
+├── .env                   # 环境变量配置（需自行创建）
+└── .env.example           # 环境变量示例
 ```
 
 ## 🛠️ 开发

@@ -6,7 +6,7 @@
 import os
 import time
 import uuid
-import re
+import logging
 from openai import OpenAI, OpenAIError
 from opencc import OpenCC
 from lingua import Language, LanguageDetectorBuilder
@@ -14,6 +14,9 @@ from lingua import Language, LanguageDetectorBuilder
 # 加载.env 文件
 from dotenv import load_dotenv
 load_dotenv()
+
+# 配置日志记录器
+logger = logging.getLogger(__name__)
 
 
 def translate_to_simple_chinese(text, param='t2s'):
@@ -85,7 +88,7 @@ def language_classify(text):
                 return 'zh-Hant'  # 繁体中文
 
     except Exception as e:
-        print(f"语言检测失败：{str(e)}")
+        logger.debug(f"语言检测失败：{str(e)}")
         return ""  # 降级处理
 
 
@@ -99,15 +102,15 @@ def _get_llm_config(use_backup=False):
     if use_backup:
         api_key = os.getenv("LLM_API_KEY_BACKUP")
         base_url = os.getenv("LLM_API_URL_BACKUP")
-        model = os.getenv("LLM_MODEL_BACKUP")
+        model = os.getenv("LLM_MT_MODEL_BACKUP")
         # 备用模型最大序列长度为 32768，设置为安全的 30000
         max_tokens = 30000
     else:
         api_key = os.getenv("LLM_API_KEY")
         base_url = os.getenv("LLM_API_URL")
-        model = os.getenv("LLM_MODEL")
-        # 主模型支持更大的 max_tokens
-        max_tokens = 60000
+        model = os.getenv("LLM_MT_MODEL")
+        # 主模型支持的 max_tokens
+        max_tokens = 30000
     
     return api_key, base_url, model,  max_tokens
 
@@ -177,7 +180,7 @@ def _build_system_prompt(expert, target_lang, context=''):
     
     return system_prompt
 
-def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH', max_tokens=60000):
+def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH', max_tokens=30000):
     """
     使用大语言模型进行翻译，支持主备模型自动切换。
 
@@ -212,29 +215,31 @@ def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH'
         
         if not all([api_key, base_url, model]):
             model_type = "备用" if use_backup else "主"
-            print(f"警告：{model_type}模型配置不完整，跳过")
+            logger.warning(f"{model_type}模型配置不完整，跳过")
             continue
         
         # 使用传入的 max_tokens 和模型限制中的较小值
         actual_max_tokens = min(max_tokens, model_max_tokens)
         
         model_label = "备用模型" if use_backup else "主模型"
-        print(f"正在使用{model_label}: {model} (max_tokens: {actual_max_tokens})")
+        logger.debug(f"正在使用{model_label}: {model} (max_tokens: {actual_max_tokens})")
         
         try:
             client = OpenAI(api_key=api_key, base_url=base_url)
             
             # 根据是否使用备用模型调整参数
             if use_backup:
-                # 备用模型使用更保守的参数以提高准确性
-                temperature = 0.1
-                top_p = 0.85
-                presence_penalty = 0.1
+                # 备用模型暂时使用线上API相同的模型，因此模型参数保持不变
+                temperature = 0.7
+                top_p = 0.6
+                presence_penalty = 0.05
+                extra_body = {}   # 备用模型不使用 top_k
             else:
-                # 主模型使用原有参数
-                temperature = 0.1
-                top_p = 0.9
-                presence_penalty = 0.2
+                # 主模型 (HY-MT1.5-7B) 使用官方推荐参数
+                temperature = 0.7
+                top_p = 0.6
+                presence_penalty = 0.05  # repetition_penalty 1.05 对应 presence_penalty 约 0.05
+                extra_body = {}  # HY-MT1.5-7B 推荐参数
             
             retry_delay = 1
             max_retries = 3
@@ -253,6 +258,7 @@ def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH'
                         timeout=180,
                         max_tokens=actual_max_tokens,
                         stop=["===EXAMPLE", "SOURCE:", "（请注意", "(Note"],
+                        **extra_body  # 传递 top_k 等额外参数
                     )
                     result = response.choices[0].message.content.strip()
                     
@@ -262,23 +268,23 @@ def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH'
                             raise OpenAIError("Model repeated the few-shot example.")
 
                     if use_backup:
-                        print(f"成功使用备用模型完成翻译")
+                        logger.info(f"成功使用备用模型完成翻译")
                     else:
-                        print(f"成功使用主模型完成翻译")
+                        logger.debug(f"成功使用主模型完成翻译")
                     return result
 
                 except OpenAIError as e:
-                    print(f'{model_label} 第 {attempt + 1} 次尝试失败: {e}')
+                    logger.warning(f'{model_label} 第 {attempt + 1} 次尝试失败: {e}')
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                         retry_delay *= 2
                     continue
         
         except Exception as e:
-            print(f"{model_label} 初始化失败: {e}")
+            logger.error(f"{model_label} 初始化失败: {e}")
             continue
     
-    print("错误：所有模型均翻译失败")
+    logger.error("所有模型均翻译失败")
     return ""
 
 
@@ -293,7 +299,7 @@ def llm_translate_batch(text_list, context='', source_lang='auto', target_lang='
     :return: 翻译后的文本列表
     """
     if not isinstance(text_list, list):
-        print("llm_translate_batch 要求输入必须是 list 类型")
+        logger.error("llm_translate_batch 要求输入必须是 list 类型")
         return []
     
     if not text_list:
@@ -339,22 +345,22 @@ def llm_translate_batch(text_list, context='', source_lang='auto', target_lang='
                 translated_parts = translated_text.split(SEPARATOR)
                 
                 if len(translated_parts) != len(batch):
-                    print(f"警告：批次 {idx} 翻译后数量不匹配，期望{len(batch)}条，实际{len(translated_parts)}条")
+                    logger.warning(f"批次 {idx} 翻译后数量不匹配，期望{len(batch)}条，实际{len(translated_parts)}条")
                     for text in batch:
                         try:
                             translated = llm_translate('title', text, context, source_lang, target_lang)
                             all_translated.append(translated if translated else text)
                         except Exception as e:
-                            print(f"单条翻译失败：{str(e)}")
+                            logger.error(f"单条翻译失败：{str(e)}")
                             all_translated.append(text)
                 else:
                     all_translated.extend(translated_parts)
             else:
-                print(f"批次 {idx} 翻译返回空值，保留原文")
+                logger.warning(f"批次 {idx} 翻译返回空值，保留原文")
                 all_translated.extend(batch)
                 
         except Exception as e:
-            print(f"批次 {idx} 翻译失败：{str(e)}")
+            logger.error(f"批次 {idx} 翻译失败：{str(e)}")
             all_translated.extend(batch)
 
     return all_translated

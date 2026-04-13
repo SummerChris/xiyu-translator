@@ -48,7 +48,7 @@ def example_batch_translation():
     
     texts = [
         "Good morning!",
-        "日、ベトナム社会主義共和国のトー・ラム・ベトナム共産党書記長兼国家主席と電話会談を行いました。私から、党書記長再任及び国家主席就任への祝意を述べるとともに、地域の戦略的環境が厳しさを増す中、「戦略的自主」を掲げるベトナムとの関係を一層強化したい旨をお伝えしました。",
+        "How are you doing today?",
         "Have a nice day!",
         "See you later!",
     ]
@@ -98,7 +98,6 @@ def example_language_detection():
         "這是繁體中文",
         "This is English",
         "混合文本：简体和繁體共存",
-
     ]
     
     lang_names = {
