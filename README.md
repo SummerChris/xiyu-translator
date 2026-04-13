@@ -16,7 +16,7 @@
 ### 从 Git 仓库安装
 
 ```bash
-git clone http://qldu.my.to:1080/qldu/XiYuTranslator.git
+git clone https://github.com/SummerChris/XiYuTranslator.git
 cd XiYuTranslator
 pip install .
 ```

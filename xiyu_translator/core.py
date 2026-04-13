@@ -89,23 +89,38 @@ def language_classify(text):
         return ""  # 降级处理
 
 
-def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH', max_tokens=60000):
+def _get_llm_config(use_backup=False):
     """
-    使用大语言模型进行翻译。
-
-    :param expert: AI 专家类型，如 'twitter'、'news'、'academic'、'title' 或 ''
-    :param text: 需要翻译的文本
-    :param context: 上下文信息（当 expert 为空时使用）
-    :param source_lang: 源语言（默认自动检测）
-    :param target_lang: 目标语言（默认 ZH 简体中文，EN 英文）
-    :param max_tokens: 最大 token 数，默认 60000
-    :return: 翻译后的文本
+    内部函数：获取 LLM 配置信息
+    
+    :param use_backup: 是否使用备用模型
+    :return: (api_key, base_url, model, max_tokens) 元组
     """
-    if target_lang == 'ZH':
-        target_lang = 'Simplified Chinese'
-    if target_lang == 'EN':
-        target_lang = 'English'
+    if use_backup:
+        api_key = os.getenv("LLM_API_KEY_BACKUP")
+        base_url = os.getenv("LLM_API_URL_BACKUP")
+        model = os.getenv("LLM_MODEL_BACKUP")
+        # 备用模型最大序列长度为 32768，设置为安全的 30000
+        max_tokens = 30000
+    else:
+        api_key = os.getenv("LLM_API_KEY")
+        base_url = os.getenv("LLM_API_URL")
+        model = os.getenv("LLM_MODEL")
+        # 主模型支持更大的 max_tokens
+        max_tokens = 60000
+    
+    return api_key, base_url, model,  max_tokens
 
+
+def _build_system_prompt(expert, target_lang, context=''):
+    """
+    内部函数：构建系统提示词
+    
+    :param expert: AI 专家类型
+    :param target_lang: 目标语言
+    :param context: 上下文信息
+    :return: 系统提示词字符串
+    """
     # 1. 基础约束强化
     base_rules = (
         f"You are a strictly mechanical translation API. Your ONLY function is to translate text into {target_lang}.\n"
@@ -159,8 +174,30 @@ def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH'
         system_prompt = (
             f"{base_rules}\nTranslate the text. the context is {context}"
         )
+    
+    return system_prompt
 
-    # 3. 用户输入格式：生成随机 ID 实现任务隔离
+def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH', max_tokens=60000):
+    """
+    使用大语言模型进行翻译，支持主备模型自动切换。
+
+    :param expert: AI 专家类型，如 'twitter'、'news'、'academic'、'title' 或 ''
+    :param text: 需要翻译的文本
+    :param context: 上下文信息（当 expert 为空时使用）
+    :param source_lang: 源语言（默认自动检测）
+    :param target_lang: 目标语言（默认 ZH 简体中文，EN 英文）
+    :param max_tokens: 最大 token 数，默认 60000
+    :return: 翻译后的文本
+    """
+    if target_lang == 'ZH':
+        target_lang = 'Simplified Chinese'
+    if target_lang == 'EN':
+        target_lang = 'English'
+
+    # 构建系统提示词
+    system_prompt = _build_system_prompt(expert, target_lang, context)
+
+    # 3. 用户输入格式：生成随机 ID 实现任务隔离（LLM-Studio 共享 KV 必需）
     task_id = str(uuid.uuid4()).split('-')[0].upper()
     user_prompt = (
         f"TaskID: {task_id}\n"
@@ -169,45 +206,79 @@ def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH'
         f"TRANSLATION:\n"
     )
 
-    client = OpenAI(
-        api_key=os.getenv("LLM_API_KEY"),
-        base_url=os.getenv("LLM_API_URL")
-    )
-    model = os.getenv("LLM_MODEL")
-    retry_delay = 1
-    max_retries = 3
-
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.8,
-                top_p=0.9,
-                presence_penalty=0.2,
-                timeout=180,
-                max_tokens=max_tokens,
-                stop=["===EXAMPLE", "SOURCE:", "（请注意", "(Note"],
-            )
-            result = response.choices[0].message.content.strip()
-            
-            # 过滤重复的系统提示词
-            if result.startswith("快来看看"):
-                if "Check this out" not in text:
-                    raise OpenAIError("Model repeated the few-shot example.")
-
-            return result
-
-        except OpenAIError as e:
-            print(f'Attempt {attempt + 1} failed: {e}')
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                retry_delay *= 2
+    # 尝试主模型和备用模型
+    for use_backup in [False, True]:
+        api_key, base_url, model, model_max_tokens = _get_llm_config(use_backup)
+        
+        if not all([api_key, base_url, model]):
+            model_type = "备用" if use_backup else "主"
+            print(f"警告：{model_type}模型配置不完整，跳过")
             continue
+        
+        # 使用传入的 max_tokens 和模型限制中的较小值
+        actual_max_tokens = min(max_tokens, model_max_tokens)
+        
+        model_label = "备用模型" if use_backup else "主模型"
+        print(f"正在使用{model_label}: {model} (max_tokens: {actual_max_tokens})")
+        
+        try:
+            client = OpenAI(api_key=api_key, base_url=base_url)
+            
+            # 根据是否使用备用模型调整参数
+            if use_backup:
+                # 备用模型使用更保守的参数以提高准确性
+                temperature = 0.1
+                top_p = 0.85
+                presence_penalty = 0.1
+            else:
+                # 主模型使用原有参数
+                temperature = 0.1
+                top_p = 0.9
+                presence_penalty = 0.2
+            
+            retry_delay = 1
+            max_retries = 3
+            
+            for attempt in range(max_retries):
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=temperature,
+                        top_p=top_p,
+                        presence_penalty=presence_penalty,
+                        timeout=180,
+                        max_tokens=actual_max_tokens,
+                        stop=["===EXAMPLE", "SOURCE:", "（请注意", "(Note"],
+                    )
+                    result = response.choices[0].message.content.strip()
+                    
+                    # 过滤重复的系统提示词
+                    if result.startswith("快来看看"):
+                        if "Check this out" not in text:
+                            raise OpenAIError("Model repeated the few-shot example.")
 
+                    if use_backup:
+                        print(f"成功使用备用模型完成翻译")
+                    else:
+                        print(f"成功使用主模型完成翻译")
+                    return result
+
+                except OpenAIError as e:
+                    print(f'{model_label} 第 {attempt + 1} 次尝试失败: {e}')
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                    continue
+        
+        except Exception as e:
+            print(f"{model_label} 初始化失败: {e}")
+            continue
+    
+    print("错误：所有模型均翻译失败")
     return ""
 
 
