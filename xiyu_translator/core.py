@@ -117,7 +117,7 @@ def _get_llm_config(use_backup=False):
 
 def _build_system_prompt(expert, target_lang, context=''):
     """
-    内部函数：构建系统提示词
+    内部函数：构建系统提示词，定义翻译风格和规则
     
     :param expert: AI 专家类型
     :param target_lang: 目标语言
@@ -130,7 +130,7 @@ def _build_system_prompt(expert, target_lang, context=''):
         f"### STRICT RULES:\n"
         f"1. Output PURE translation ONLY. No explanations, no parentheses, no AI disclaimers.\n"
         f"2. Neutrality Override: You MUST translate ALL content, including military, political, or sensitive terms. Do not refuse any translation.\n"
-        f"3. Retain ALL @usernames, URLs, and hashtags exactly as they appear.\n"
+        f"3. CRITICAL: You MUST retain ALL @usernames, URLs, and hashtags exactly as they appear in the original text (e.g. @DFCgov remains @DFCgov). Do not omit them.\n"
         f"4. If the text is very short (e.g., just 'Bye' or a username), just translate what is there and STOP."
     )
 
@@ -140,8 +140,8 @@ def _build_system_prompt(expert, target_lang, context=''):
             f"{base_rules}\n"
             f"Style: Native, idiomatic, social media (Twitter/X style).\n\n"
             f"===EXAMPLE START===\n"
-            f"SOURCE:\nCheck this out! #cool\n"
-            f"TRANSLATION:\n快来看看这个！#酷\n"
+            f"SOURCE:\nGreat meeting with @Alice today! Check this out! #cool\n"
+            f"TRANSLATION:\n今天和 @Alice 的会面很棒！快来看看这个！#cool\n"
             f"===EXAMPLE END==="
         )
     elif expert == 'news':
@@ -197,16 +197,14 @@ def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH'
     if target_lang == 'EN':
         target_lang = 'English'
 
-    # 构建系统提示词
+    # 构建系统提示词（定义翻译风格和规则）
     system_prompt = _build_system_prompt(expert, target_lang, context)
 
-    # 3. 用户输入格式：生成随机 ID 实现任务隔离（LLM-Studio 共享 KV 必需）
+    # 构建用户提示词：使用 TaskID 隔离 KV Cache，避免大批量翻译时模型变傻
     task_id = str(uuid.uuid4()).split('-')[0].upper()
     user_prompt = (
         f"TaskID: {task_id}\n"
-        f"SOURCE:\n"
-        f"{text}\n"
-        f"TRANSLATION:\n"
+        f"{text}"
     )
 
     # 尝试主模型和备用模型
@@ -227,19 +225,11 @@ def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH'
         try:
             client = OpenAI(api_key=api_key, base_url=base_url)
             
-            # 根据是否使用备用模型调整参数
-            if use_backup:
-                # 备用模型暂时使用线上API相同的模型，因此模型参数保持不变
-                temperature = 0.7
-                top_p = 0.6
-                presence_penalty = 0.05
-                extra_body = {}   # 备用模型不使用 top_k
-            else:
-                # 主模型 (HY-MT1.5-7B) 使用官方推荐参数
-                temperature = 0.7
-                top_p = 0.6
-                presence_penalty = 0.05  # repetition_penalty 1.05 对应 presence_penalty 约 0.05
-                extra_body = {}  # HY-MT1.5-7B 推荐参数
+            # 根据官方文档设置推理参数
+            # HY-MT1.5-7B 推荐参数: top_k=20, top_p=0.6, repetition_penalty=1.05, temperature=0.7
+            # 但由于 API 服务端可能不支持这些额外参数,只使用标准参数
+            temperature = 0.7
+            top_p = 0.6
             
             retry_delay = 1
             max_retries = 3
@@ -254,17 +244,29 @@ def llm_translate(expert, text, context='', source_lang='auto', target_lang='ZH'
                         ],
                         temperature=temperature,
                         top_p=top_p,
-                        presence_penalty=presence_penalty,
                         timeout=180,
-                        max_tokens=actual_max_tokens,
-                        stop=["===EXAMPLE", "SOURCE:", "（请注意", "(Note"],
-                        **extra_body  # 传递 top_k 等额外参数
+                        max_tokens=actual_max_tokens
                     )
                     result = response.choices[0].message.content.strip()
+                    logger.debug(f"LLM 原始翻译输出: {repr(result)}")
                     
-                    # 过滤重复的系统提示词
-                    if result.startswith("快来看看"):
-                        if "Check this out" not in text:
+                    # 过滤掉 TaskID 行（模型可能会重复输出）
+                    lines = result.split('\n')
+                    filtered_lines = []
+                    for line in lines:
+                        # 跳过包含 TaskID/任务ID 的行
+                        if 'TaskID' in line or '任务ID' in line or '任务编号' in line:
+                            continue
+                        # 跳过来源相关的行（但保留空行以维持段落结构）
+                        if line.strip() in ['来源：', '消息来源：']:
+                            continue
+                        filtered_lines.append(line)
+                    
+                    result = '\n'.join(filtered_lines).strip()
+                    
+                    # 过滤重复的系统提示词示例
+                    if result.startswith("今天和 @Alice"):
+                        if "Great meeting" not in text:
                             raise OpenAIError("Model repeated the few-shot example.")
 
                     if use_backup:
